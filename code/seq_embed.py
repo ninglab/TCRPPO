@@ -7,13 +7,12 @@ from config import AMINO_ACIDS, BLOSUM, TCR_LENGTH, PEP_LENGTH, LEARNED_DIM, dev
 
 class SeqEmbed(nn.Module):
     def __init__(self, config):
-        super(SeqEmbed, self).__init__()
-        
-        self.peptide_hidden_dim = config['peptide_hidden_dim']
-        self.embed_latent_dim = config['embed_latent_dim']
+        super(SeqEmbed, self).__init__()        
+        self.hidden_dim = config['hidden_dim']
         self.kmer = config["peptide_kmer"]
-        self.use_step = config["use_step"]      
-        self.features_dim = self.embed_latent_dim * 4
+        self.use_step = config["use_step"]
+          
+        self.features_dim = self.hidden_dim * 4
         self.max_tcr_len = config["max_tcr_len"]   
         # encode features
         self.deep, self.blosum, self.onehot = False, False, False
@@ -39,25 +38,25 @@ class SeqEmbed(nn.Module):
         for i, amino in enumerate(AMINO_ACIDS):
             self.a2n_func[amino] = i+1
         
-        # embed alleles
+        # embed peptide
         if config["embed_peptide"] == "FC":
             self.peptide_model = nn.Sequential(
                                   nn.Flatten(),
-                                  nn.Linear(self.embed_dim * PEP_LENGTH, self.peptide_hidden_dim),
+                                  nn.Linear(self.embed_dim * PEP_LENGTH, self.hidden_dim),
                                   nn.ReLU(),
-                                  nn.Linear(self.peptide_hidden_dim, self.embed_latent_dim)).to(device)
+                                  nn.Linear(self.hidden_dim, self.hidden_dim)).to(device)
 
         elif config["embed_peptide"] == "CNN":
             self.peptide_model = nn.Sequential(
-                                  nn.Conv1d(self.embed_dim, self.peptide_hidden_dim, self.kmer),
+                                  nn.Conv1d(self.embed_dim, self.hidden_dim, self.kmer),
                                   nn.ReLU(),
                                   nn.Flatten(),
-                                  nn.Linear(self.peptide_hidden_dim * (PEP_LENGTH - self.kmer + 1), self.embed_latent_dim)).to(device)
+                                  nn.Linear(self.hidden_dim * (PEP_LENGTH - self.kmer + 1), self.latent_dim)).to(device)
         elif config["embed_peptide"] == "LSTM":
-            self.peptide_model = nn.LSTM(self.embed_dim, self.embed_latent_dim, batch_first=True, bidirectional=True).to(device)
+            self.peptide_model = nn.LSTM(self.embed_dim, self.hidden_dim, batch_first=True, bidirectional=True).to(device)
         
         # embed peptides
-        self.tcr_model = nn.LSTM(self.embed_dim, self.embed_latent_dim, batch_first=True, bidirectional=True).to(device)
+        self.tcr_model = nn.LSTM(self.embed_dim, self.hidden_dim, batch_first=True, bidirectional=True).to(device)
 
     def _build_blosum_dict(self):
         dict_file = open(BLOSUM, 'r')
@@ -197,14 +196,14 @@ class SeqEmbed(nn.Module):
         packed_encodings.to(device)
         
         if is_peptide:
-            h0 = torch.randn(1, len(peptides), self.embed_latent_dim).repeat(2,1,1).to(device)
-            c0 = torch.randn(1, len(peptides), self.embed_latent_dim).repeat(2,1,1).to(device)
+            h0 = torch.randn(1, len(peptides), self.hidden_dim).repeat(2,1,1).to(device)
+            c0 = torch.randn(1, len(peptides), self.hidden_dim).repeat(2,1,1).to(device)
             
             _, (hn, _) = self.peptide_model(packed_encodings, (h0, c0))
             return hn.transpose(1, 0).flatten(1)
         else:
-            h0 = torch.randn(1, len(peptides), self.embed_latent_dim).repeat(2,1,1).to(device)
-            c0 = torch.randn(1, len(peptides), self.embed_latent_dim).repeat(2,1,1).to(device)
+            h0 = torch.randn(1, len(peptides), self.hidden_dim).repeat(2,1,1).to(device)
+            c0 = torch.randn(1, len(peptides), self.hidden_dim).repeat(2,1,1).to(device)
             
             peptide_embeddings, (hn, _) = self.tcr_model(packed_encodings, (h0, c0))
 

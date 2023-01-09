@@ -9,7 +9,6 @@ import torch
 from torch import nn
 from data_utils import num2seq
 
-from config import PATH, DICT_PATH
 from stable_baselines3.common.utils import get_device
 from stable_baselines3.common.distributions import (
     BernoulliDistribution,

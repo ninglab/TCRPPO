@@ -14,7 +14,6 @@ from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedul
 from stable_baselines3.common.utils import safe_mean
 from stable_baselines3.common.vec_env import VecEnv
 from data_utils import num2seq, edit_sequence
-from good_buffer import GoodBuffer
 from collections import deque
 import random
 
@@ -69,7 +68,6 @@ class OnPolicyAlgorithm(BaseAlgorithm):
         create_eval_env: bool = False,
         monitor_wrapper: bool = True,
         reward_model: object = None,
-        good_coef: float = 0.01,
         buffer_config: Optional[Dict[str, Any]] = None,
         policy_kwargs: Optional[Dict[str, Any]] = None,
         verbose: int = 0,
@@ -101,7 +99,6 @@ class OnPolicyAlgorithm(BaseAlgorithm):
         self.gae_lambda = gae_lambda
         self.ent_coef = ent_coef
         self.vf_coef = vf_coef
-        self.good_coef = good_coef
         self.max_grad_norm = max_grad_norm
         self.rollout_buffer = None
         self.reward_model = reward_model
@@ -111,15 +108,10 @@ class OnPolicyAlgorithm(BaseAlgorithm):
         self.bad_init_states = []
         self.bad_rewards = []
         if buffer_config is not None:
-            self.init_buffer_size = buffer_config['init_size']
-            self.bad_example_rate = buffer_config['bad_example_rate']
-            self.bad_ratio = buffer_config['init_bad_ratio']
-            self.bad_ratio_rate = buffer_config['bad_ratio_rate']
-            self.bad_ratio_step = buffer_config['bad_ratio_step']
-            self.use_tcr = buffer_config['use_tcr']
-            self.max_bad_ratio = buffer_config['max_bad_ratio']
-            
-        if buffer_config is not None: self.good_buffer = GoodBuffer(buffer_config)
+            self.bad_ratio = buffer_config['bad_ratio']
+            self.init_size = buffer_config['init_size']
+            self.rate_for_bad_ratio = buffer_config['rate_for_bad_ratio']
+            self.max_buffer_size = buffer_config['max_len']
 
     def _setup_model(self) -> None:
         self._setup_lr_schedule()
@@ -170,9 +162,6 @@ class OnPolicyAlgorithm(BaseAlgorithm):
 
         time1 = time.time()
 
-        good_actions = []
-        good_states = []
-        
         resets = [{} for _ in range(env.num_envs)]
         all_obs = [[] for _ in range(env.num_envs)]
         all_actions = [[] for _ in range(env.num_envs)]
@@ -219,20 +208,15 @@ class OnPolicyAlgorithm(BaseAlgorithm):
             
             for i, info in enumerate(infos):
                 if dones[i]:
-                    if info['score'] >= score_stop_criteria and info['score1'] + info['score2'] >= gmm_stop_criteria and self.good_coef != 0:
-                        good_actions.extend(all_actions[i])
-                        good_states.extend(all_obs[i])
-                    
                     if info['score'] < 0.9 or info['score1'] + info['score2'] < gmm_stop_criteria:
                         if len(resets[i]) == 0 or random.random() < 0.5:
                             collect_bad_samples.append( (info['peptide'], info['init_tcr']) )
-                            collect_bad_rewards.append( self.bad_example_rate ** (1.0 - info['rewards']) )
+                            collect_bad_rewards.append( self.rate_for_bad_ratio ** (1.0 - info['rewards']) )
                         
-                    if random.random() < self.bad_ratio and len(self.bad_init_states) > 1000:
+                    if random.random() < self.bad_ratio and len(self.bad_init_states) > self.init_size:
                         idx = random.choices( random_integers, weights=self.bad_rewards )[0]
                         remove_idxs.append(idx)
-                        if self.use_tcr: resets[i] = {'peptide': self.bad_init_states[idx][0], 'init_tcr': self.bad_init_states[idx][1]}
-                        else: resets[i] = {'peptide': self.bad_init_states[idx][0], 'init_tcr': None}
+                        resets[i] = {'peptide': self.bad_init_states[idx][0], 'init_tcr': self.bad_init_states[idx][1]}
                     else:
                         resets[i] = {}
                         
@@ -280,8 +264,8 @@ class OnPolicyAlgorithm(BaseAlgorithm):
         
         self.bad_init_states.extend(collect_bad_samples)
         self.bad_rewards.extend(collect_bad_rewards)
-        if len(self.bad_init_states) > self.init_buffer_size:
-            remove_idxs = len(self.bad_init_states) - self.init_buffer_size
+        if len(self.bad_init_states) > self.max_buffer_size:
+            remove_idxs = len(self.bad_init_states) - self.max_buffer_size
             self.bad_init_states = self.bad_init_states[remove_idxs:]
             self.bad_rewards = self.bad_rewards[remove_idxs:]
         
@@ -291,11 +275,7 @@ class OnPolicyAlgorithm(BaseAlgorithm):
             _, values, _ = self.policy.forward(obs_tensor)
 
         rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones)
-
-        if len(good_states) > 0:
-            print("add %d good actions to buffer" % (len(good_states)))
-            self.good_buffer.store(good_states, good_actions)
-            
+        
         callback.on_rollout_end()
         sys.stdout.flush()
         return True
@@ -325,18 +305,9 @@ class OnPolicyAlgorithm(BaseAlgorithm):
             total_timesteps, eval_env, callback, eval_freq, n_eval_episodes, eval_log_path, reset_num_timesteps, tb_log_name
         )
         
-        #max_tcr_len = self.env.get_attr("max_tcr_len")[0]
-        #tcrs = num2seq(self._last_obs[:, :max_tcr_len])
-        #peptides = num2seq(self._last_obs[:, max_tcr_len:])
-        #rewards = self.reward_model.reward(tcrs, peptides)
-        
         callback.on_training_start(locals(), globals())
         k = 1
         while self.num_timesteps < total_timesteps:
-            
-            if self.bad_ratio < self.max_bad_ratio and self.num_timesteps > self.bad_ratio_step * k:
-                k += 1
-                self.bad_ratio += self.bad_ratio_rate
             
             continue_training = self.collect_rollouts(self.env, callback, self.rollout_buffer, n_rollout_steps=self.n_steps)
 
@@ -345,8 +316,6 @@ class OnPolicyAlgorithm(BaseAlgorithm):
 
             iteration += 1
             self._update_current_progress_remaining(self.num_timesteps, total_timesteps)
-            
-            #if iteration % 10 == 0 and self.good_coef != 0 and len(self.good_buffer._states) > self.batch_size: self.good_buffer.update_priority()
             
             # Display training infos
             if log_interval is not None and iteration % log_interval == 0:

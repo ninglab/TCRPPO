@@ -13,7 +13,6 @@ import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from env_util import make_vec_env
 from data_utils import num2seq, seq2num, n2a_func
-from prior_dist import PriorDist
 cwd = os.path.dirname(os.path.abspath(__file__))
 
 from reward import Reward
@@ -268,15 +267,13 @@ if __name__ == '__main__':
     
     parser.add_argument('--anneal_nomod_step', type=int, default=10000)
     parser.add_argument('--anneal_nomod_rate', type=float, default=0.05)
+    parser.add_argument('--encode', type=str, default="deep_blosum_onehot", help="amino acid encoding")
     
     # parameters for policy network
-    parser.add_argument('--peptide_hidden_dim', type=int, default=128, help="dimension of hidden units in allele model")
-    parser.add_argument('--embed_latent_dim', type=int, default=128, help="dimension of latent embeddings")
     parser.add_argument('--peptide_kmer', type=int, default=3, help="need to be specified when using CNN to encode alleles")
     parser.add_argument('--embed_peptide', type=str, default="LSTM", help="model architecture used to encode alleles")
-    parser.add_argument('--encode', type=str, default="blosum", help="model architecture used to encode alleles")
     
-    parser.add_argument('--shared_dim', type=int, default=128, help="dimension of shared layer in policy network and value network")
+    parser.add_argument('--hidden_dim', type=int, default=128, help="dimension of shared layer in policy network and value network")
     parser.add_argument('--latent_dim', type=int, default=64, help="dimension of latent layer in two networks")
 
     # ppo algorithms
@@ -297,20 +294,15 @@ if __name__ == '__main__':
     parser.add_argument('--num_envs', type=int, default=20, help="number of environments")
     parser.add_argument('--n_steps', type=int, default=256, help="number of roll out steps")
     parser.add_argument('--max_step', type=int, default=8, help="maximum number of steps")
-    parser.add_argument('--use_tcr', action="store_false")
     
-    parser.add_argument('--bad_ratio_step', type=int, default=50000, help="every K steps increase bad_ratio by bad_ratio_rate")
-    parser.add_argument('--bad_ratio_rate', type=float, default=0.0)
-    parser.add_argument('--init_bad_ratio', type=float, default=0.5)
-    parser.add_argument('--max_bad_ratio', type=float, default=0.5)
-    
-    parser.add_argument('--bad_example_rate', type=float, default=5)
+    parser.add_argument('--bad_ratio', type=float, default=0.5) 
+    parser.add_argument('--rate_for_bad_ratio', type=float, default=5.0)
     
     args = parser.parse_args()
 
     t1 = time.time()
     dir_name = ""
-    names = ['beta', 'max_bad_ratio', 'gamma', 'n_steps', 'embed_latent_dim']
+    names = ['beta', 'bad_ratio', 'gamma', 'n_steps', 'embed_latent_dim']
     
     for name in names:
         attr = None
@@ -348,7 +340,6 @@ if __name__ == '__main__':
                     "args": args, "max_tcr_len": args.max_len}
   
     m_env = make_vec_env(TCREnv, n_envs=args.num_envs, env_kwargs=m_env_kwargs, vec_env_cls=SubprocVecEnv)
-    #ftype = {"deep":True, "blosum":True, "onehot": True}
     
     if_deep = True if "deep" in args.encode else False
     if_blosum = True if "blosum" in args.encode else False
@@ -357,20 +348,18 @@ if __name__ == '__main__':
     embed_dim = sum([1 for boo in ftype.values() if boo]) * 20
     
     config = {"ftype":ftype, "max_tcr_len": args.max_len, \
-              "peptide_hidden_dim": args.peptide_hidden_dim, "embed_latent_dim": args.embed_latent_dim, \
-              "peptide_kmer": args.peptide_kmer, "embed_peptide": args.embed_peptide, "use_step": args.use_step}
+              "hidden_dim": args.hidden_dim, "peptide_kmer": args.peptide_kmer, \
+              "embed_peptide": args.embed_peptide, "use_step": args.use_step}
     
     seq_features = SeqEmbed(config)
      
     policy_kwargs = dict(features_extractor=seq_features, \
-                        net_arch = [args.shared_dim, dict(vf=[args.latent_dim], pi=[args.latent_dim])], \
+                        net_arch = [args.hidden_dim, dict(vf=[args.latent_dim], pi=[args.latent_dim])], \
                         use_step = args.use_step, max_tcr_len = args.max_len)
     
-    checkpoint_callback = CheckpointCallback(save_freq=10000, save_path=path+'/', name_prefix='rl_model')
+    checkpoint_callback = CheckpointCallback(save_freq=50000, save_path=path+'/', name_prefix='rl_model')
     
-    buffer_config = dict(max_len = 20000, init_size = 2000, use_tcr=args.use_tcr, bad_ratio_step=args.bad_ratio_step,
-                         bad_example_rate=args.bad_example_rate, init_bad_ratio=args.init_bad_ratio,
-                         bad_ratio_rate=args.bad_ratio_rate, max_bad_ratio=args.max_bad_ratio)
+    buffer_config = dict(max_len = 5000, init_size = 1000, bad_ratio=args.bad_ratio, rate_for_bad_ratio=args.rate_for_bad_ratio)
     
     model = PPO(PolicyNet, m_env, verbose=1, reward_model=reward_model, n_steps=args.n_steps, ent_coef=args.ent_coef, gamma=args.gamma, clip_range=args.clip, target_kl=args.kl_target, buffer_config=buffer_config, policy_kwargs=policy_kwargs)
     

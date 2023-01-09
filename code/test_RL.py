@@ -256,7 +256,6 @@ if __name__ == "__main__":
     parser.add_argument('--num_envs', type=int, default=10, help="number of environments")
     parser.add_argument('--n_steps', type=int, default=20, help="number of roll out steps")
     parser.add_argument('--max_step', type=int, default=8, help="maximum number of steps")
-    parser.add_argument('--good_sample_step', type=int, default=1, help="good sample step")
     parser.add_argument('--sample_rate', type=float, default=0.8, help='the rate of sampling from IEDB dataset')
     
     parser.add_argument('--device', type=str, default="cpu")
@@ -290,7 +289,6 @@ if __name__ == "__main__":
     
     batch_peptides = rollout_peptides[:args.num_envs]
     batch_idxs = np.arange(args.num_envs)
-    
     
     obs = m_env.reset([True] * len(batch_peptides), batch_peptides, [None] * len(batch_peptides))
     rollout = 0

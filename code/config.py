@@ -14,8 +14,8 @@ BLOSUM = cwd + "/blosum.txt"
 
 LEARNED_DIM = 20
 
-TCR_FILE = os.path.dirname(cwd) + "/tcrdb/train_uniq_tcr_seqs.txt"
-LENGTH_DIST_FILE = os.path.dirname(cwd) + "/tcrdb/length_dist.txt"
+TCR_FILE = os.path.dirname(cwd) + "/data/tcrdb/train_uniq_tcr_seqs.txt"
+LENGTH_DIST_FILE = os.path.dirname(cwd) + "/data/tcrdb/length_dist.txt"
 LENGTH_DIST = {}
 for line in open(LENGTH_DIST_FILE, 'r'):
     length, freq = line.strip().split()

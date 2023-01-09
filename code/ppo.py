@@ -96,7 +96,6 @@ class PPO(OnPolicyAlgorithm):
         ent_coef: float = 0.0,
         vf_coef: float = 0.5,
         reward_model: object = None,
-        good_coef: float = 0.0,
         max_grad_norm: float = 0.5,
         use_sde: bool = False,
         sde_sample_freq: int = -1,
@@ -124,7 +123,6 @@ class PPO(OnPolicyAlgorithm):
             sde_sample_freq=sde_sample_freq,
             tensorboard_log=tensorboard_log,
             reward_model=reward_model,
-            good_coef=good_coef,
             buffer_config=buffer_config,
             policy_kwargs=policy_kwargs,
             verbose=verbose,
@@ -215,7 +213,7 @@ class PPO(OnPolicyAlgorithm):
             clip_range_vf = self.clip_range_vf(self._current_progress_remaining)
 
         entropy_losses, all_kl_divs = [], []
-        pg_losses, value_losses, good_losses = [], [], []
+        pg_losses, value_losses = [], []
         clip_fractions = []
 
         # train for n_epochs epochs
@@ -275,24 +273,7 @@ class PPO(OnPolicyAlgorithm):
                 
                 entropy_losses.append(entropy_loss.item())
                 
-                if self.good_coef != 0 and self.good_buffer.length() > 20 * self.batch_size:
-                    good_obs, good_actions = self.good_buffer.sample(self.batch_size)
-                    good_obs = good_obs.to(self.device).long()
-                    good_actions = good_actions.to(self.device).long()
-                            
-                    _, _, _, pd  = self.policy.evaluate_actions(good_obs, good_actions)
-                    
-                    pos_pd, amino_pd = pd
-                    
-                    good_aminos = good_actions[:, 1] - 1
-                    
-                    good_loss = F.cross_entropy(pos_pd, good_actions[:, 0]) + F.cross_entropy(amino_pd, good_aminos)
-                    
-                    good_losses.append(good_loss.item())
-                
-                    loss = policy_loss + self.ent_coef * entropy_loss + self.vf_coef * value_loss + self.good_coef * good_loss
-                else:
-                    loss = policy_loss + self.ent_coef * entropy_loss + self.vf_coef * value_loss
+                loss = policy_loss + self.ent_coef * entropy_loss + self.vf_coef * value_loss
                 # Optimization step
                 self.policy.optimizer.zero_grad()
                 loss.backward()
@@ -314,7 +295,6 @@ class PPO(OnPolicyAlgorithm):
         logger.record("train/entropy_loss", np.mean(entropy_losses))
         logger.record("train/policy_gradient_loss", np.mean(pg_losses))
         logger.record("train/value_loss", np.mean(value_losses))
-        logger.record("train/good_loss", np.mean(good_losses))
         logger.record("train/approx_kl", np.mean(approx_kl_divs))
         logger.record("train/clip_fraction", np.mean(clip_fractions))
         logger.record("train/loss", loss.item())
